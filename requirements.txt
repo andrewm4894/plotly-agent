@@ -4,4 +4,6 @@ langchain-core
 langchain-openai
 openai
 pandas
+numpy
 plotly
+matplotlib
