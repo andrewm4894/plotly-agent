@@ -150,7 +150,7 @@ class PlotlyAgentExecutionEnvironment:
 
 
 class PlotlyAgent:
-    def __init__(self, model="gpt-4o"):
+    def __init__(self, model="gpt-4o", system_prompt: Optional[str] = None):
         self.llm = ChatOpenAI(model=model)
         self.df = None
         self.df_info = None
@@ -160,6 +160,7 @@ class PlotlyAgent:
         self.chat_history = []
         self.agent_executor = None
         self.last_generated_code = None
+        self.system_prompt = system_prompt or DEFAULT_SYSTEM_PROMPT
 
     def set_dataframe(self, df: pd.DataFrame, sql_query: Optional[str] = None):
         """Set the dataframe and capture its schema and sample."""
@@ -256,8 +257,6 @@ class PlotlyAgent:
         ]
 
         # Create system prompt with dataframe information
-        system_prompt = DEFAULT_SYSTEM_PROMPT
-
         sql_context = ""
         if self.sql_query:
             sql_context = f"In case it is useful to help with the data understanding, the df was generated using the following SQL query:\n{self.sql_query}"
@@ -266,7 +265,7 @@ class PlotlyAgent:
             [
                 (
                     "system",
-                    system_prompt.format(
+                    self.system_prompt.format(
                         df_info=self.df_info,
                         df_head=self.df_head,
                         sql_context=sql_context,
