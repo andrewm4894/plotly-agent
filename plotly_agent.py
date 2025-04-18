@@ -10,9 +10,55 @@ from typing import Dict, List, Optional, Any
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import Tool
-from langchain_core.pydantic_v1 import BaseModel, Field
+from pydantic import BaseModel, Field
 from langchain.agents import AgentExecutor, create_openai_tools_agent
 from langchain_openai import ChatOpenAI
+
+
+DEFAULT_SYSTEM_PROMPT = """
+You are an expert data visualization assistant that helps users create Plotly visualizations in Python.
+Your job is to generate Plotly code based on the user's request that will create the desired visualization
+of their pandas DataFrame.
+
+You have access to a pandas DataFrame with the following information:
+
+DataFrame Schema:
+{df_info}
+
+Sample Data (DataFrame Head):
+{df_head}
+
+{sql_context}
+
+IMPORTANT CODE FORMATTING INSTRUCTIONS:
+1. Include thorough, detailed comments in your code to explain what each section does
+2. Use descriptive variable names
+3. DO NOT include fig.show() in your code - the visualization will be rendered externally
+4. Ensure your code creates a variable named 'fig' that contains the Plotly figure object
+5. Structure your code with proper spacing for readability
+
+When a user asks for a visualization:
+1. First, use the generate_plotly_code tool to create the Python code for the visualization
+2. Then, YOU MUST ALWAYS use the execute_plotly_code tool to test and run your code
+3. If there are errors, fix the code and run it again with execute_plotly_code
+4. Check that a figure object is available using get_current_figure
+
+IMPORTANT: The code you generate MUST be executed using the execute_plotly_code tool or no figure will be created!
+YOU MUST CALL execute_plotly_code WITH THE FULL CODE, NOT JUST A REFERENCE TO THE CODE.
+
+YOUR WORKFLOW MUST BE:
+1. generate_plotly_code → 2. execute_plotly_code (paste the full code) → 3. (if needed) fix and execute again
+
+The execute_plotly_code tool actually runs the code and creates the figure object that will be shown to the user.
+Without calling execute_plotly_code, no visualization will be produced.
+
+CRITICAL: Do not use fig.show() in your code as it will be executed in a headless environment.
+
+Always return the final working code to the user along with an explanation of what the visualization shows.
+Make sure to follow best practices for data visualization, such as appropriate chart types, labels, and colors.
+
+Remember that users may want to iterate on their visualizations, so be responsive to requests for changes.
+"""
 
 # Define input schemas for the tools
 class PlotDescriptionInput(BaseModel):
@@ -42,13 +88,9 @@ class PlotlyAgentExecutionEnvironment:
         """Execute the provided code and capture the fig object if created."""
         self.output = None
         self.error = None
-        # Don't reset fig here to preserve it between calls
-        # self.fig = None
         
         # Preprocess code to remove fig.show() calls
         processed_code = self.preprocess_code(code)
-        
-        print(f"Debug: Executing code in environment (with fig.show() removed):\n{processed_code}")
         
         # Capture stdout
         old_stdout = sys.stdout
@@ -61,17 +103,12 @@ class PlotlyAgentExecutionEnvironment:
             # Check if a fig object was created
             if 'fig' in self.locals_dict:
                 self.fig = self.locals_dict['fig']
-                print(f"Debug: Fig object captured: {type(self.fig)}")
                 self.output = "Code executed successfully. Figure object was created."
             else:
                 self.error = "Code executed without errors, but no 'fig' object was created. Make sure your code creates a variable named 'fig'."
-                print("Debug: No fig object found in locals_dict")
-                # List variables in locals_dict for debugging
-                print(f"Debug: Available variables: {list(self.locals_dict.keys())}")
         
         except Exception as e:
             self.error = f"Error executing code: {str(e)}\n{traceback.format_exc()}"
-            print(f"Debug: Error during execution: {str(e)}")
         
         finally:
             # Restore stdout
@@ -84,9 +121,6 @@ class PlotlyAgentExecutionEnvironment:
                 else:
                     self.output = f"Output:\n{captured_output}"
         
-        # Debug print
-        print(f"Debug: execute_code result - success: {self.error is None and self.fig is not None}, fig: {self.fig is not None}")
-        
         return {
             "fig": self.fig,
             "output": self.output,
@@ -95,8 +129,8 @@ class PlotlyAgentExecutionEnvironment:
         }
 
 class PlotlyAgent:
-    def __init__(self, model="gpt-4"):
-        self.llm = ChatOpenAI(model=model, temperature=0)
+    def __init__(self, model="gpt-4o"):
+        self.llm = ChatOpenAI(model=model)
         self.df = None
         self.df_info = None
         self.df_head = None
@@ -140,7 +174,6 @@ class PlotlyAgent:
         
         # This is just a placeholder. The actual code generation happens in the LLM.
         # But we'll use this to capture the generated code in the post-processing step
-        print(f"Debug: Generate code for: {plot_description}")
         return f"This is a placeholder. Actual code generation happens in the agent. Prompt: {plot_description}"
     
     def execute_plotly_code(self, input_data: dict) -> str:
@@ -159,11 +192,7 @@ class PlotlyAgent:
         # Store this as the last generated code
         self.last_generated_code = code
         
-        print(f"Debug: Executing code through tool:\n{code}")
         result = self.execution_env.execute_code(code)
-        
-        # Force a print to check if fig is stored
-        print(f"Debug: After execution - fig exists: {self.execution_env.fig is not None}")
         
         if result["success"]:
             return f"Code executed successfully! A figure object was created.\n{result.get('output', '')}"
@@ -176,8 +205,6 @@ class PlotlyAgent:
         """
         if not self.execution_env:
             return "No execution environment has been initialized. Please set a dataframe first."
-        
-        print(f"Debug: get_current_figure called, fig exists: {self.execution_env.fig is not None}")
         
         if self.execution_env.fig is not None:
             return "A figure is available for display."
@@ -202,55 +229,13 @@ class PlotlyAgent:
             Tool.from_function(
                 func=self.get_current_figure,
                 name="get_current_figure",
-                description="Check if a figure exists and is available for display"
+                description="Check if a figure exists and is available for display",
+                args_schema=None
             )
         ]
         
         # Create system prompt with dataframe information
-        system_prompt = """
-        You are an expert data visualization assistant that helps users create Plotly visualizations in Python.
-        Your job is to generate Plotly code based on the user's request that will create the desired visualization
-        of their pandas DataFrame.
-
-        You have access to a pandas DataFrame with the following information:
-
-        DataFrame Schema:
-        {df_info}
-        
-        Sample Data (DataFrame Head):
-        {df_head}
-        
-        {sql_context}
-        
-        IMPORTANT CODE FORMATTING INSTRUCTIONS:
-        1. Include thorough, detailed comments in your code to explain what each section does
-        2. Use descriptive variable names
-        3. DO NOT include fig.show() in your code - the visualization will be rendered externally
-        4. Ensure your code creates a variable named 'fig' that contains the Plotly figure object
-        5. Structure your code with proper spacing for readability
-
-        When a user asks for a visualization:
-        1. First, use the generate_plotly_code tool to create the Python code for the visualization
-        2. Then, YOU MUST ALWAYS use the execute_plotly_code tool to test and run your code
-        3. If there are errors, fix the code and run it again with execute_plotly_code
-        4. Check that a figure object is available using get_current_figure
-
-        IMPORTANT: The code you generate MUST be executed using the execute_plotly_code tool or no figure will be created!
-        YOU MUST CALL execute_plotly_code WITH THE FULL CODE, NOT JUST A REFERENCE TO THE CODE.
-        
-        YOUR WORKFLOW MUST BE:
-        1. generate_plotly_code → 2. execute_plotly_code (paste the full code) → 3. (if needed) fix and execute again
-        
-        The execute_plotly_code tool actually runs the code and creates the figure object that will be shown to the user.
-        Without calling execute_plotly_code, no visualization will be produced.
-        
-        CRITICAL: Do not use fig.show() in your code as it will be executed in a headless environment.
-        
-        Always return the final working code to the user along with an explanation of what the visualization shows.
-        Make sure to follow best practices for data visualization, such as appropriate chart types, labels, and colors.
-        
-        Remember that users may want to iterate on their visualizations, so be responsive to requests for changes.
-        """
+        system_prompt = DEFAULT_SYSTEM_PROMPT
         
         sql_context = ""
         if self.sql_query:
@@ -272,8 +257,8 @@ class PlotlyAgent:
             agent=agent,
             tools=tools,
             verbose=True,
-            max_iterations=6,  # Increased iterations
-            early_stopping_method="generate",
+            max_iterations=6,
+            early_stopping_method="force",
             handle_parsing_errors=True
         )
     
@@ -284,8 +269,6 @@ class PlotlyAgent:
         
         # Add user message to chat history
         self.chat_history.append(HumanMessage(content=user_message))
-        
-        print(f"Debug: Processing message: {user_message}")
         
         # Reset last_generated_code
         self.last_generated_code = None
@@ -299,21 +282,15 @@ class PlotlyAgent:
         # Add agent response to chat history
         self.chat_history.append(AIMessage(content=response["output"]))
         
-        # Check if fig exists after processing
-        print(f"Debug: After processing - fig exists: {self.execution_env.fig is not None}")
-        
         # If the agent didn't execute the code, but did generate code, execute it directly
         if self.execution_env.fig is None and self.last_generated_code is not None:
-            print("Debug: Agent didn't execute code. Forcing execution now.")
             self.execution_env.execute_code(self.last_generated_code)
         
         # If we can extract code from the response when no code was executed, try that too
         if self.execution_env.fig is None and "```python" in response["output"]:
-            print("Debug: Extracting code from response and executing it")
             code_blocks = response["output"].split("```python")
             if len(code_blocks) > 1:
                 code = code_blocks[1].split("```")[0].strip()
-                print(f"Debug: Extracted code:\n{code}")
                 self.execution_env.execute_code(code)
         
         # Return the agent's response
@@ -322,36 +299,9 @@ class PlotlyAgent:
     def get_figure(self):
         """Return the current figure if one exists."""
         if self.execution_env and self.execution_env.fig:
-            print("Debug: Returning figure from get_figure()")
             return self.execution_env.fig
-        print("Debug: No figure available in get_figure()")
         return None
 
     def reset_conversation(self):
         """Reset the conversation history."""
         self.chat_history = []
-
-if __name__ == "__main__":
-    import pandas as pd
-    # Example usage
-    # Create sample dataframe
-    data = {
-        'date': pd.date_range(start='2023-01-01', periods=100),
-        'sales': [100 + i + 10 * (i % 7) for i in range(100)],
-        'region': ['North', 'South', 'East', 'West'] * 25,
-        'product': ['A', 'B', 'C'] * 33 + ['A'],
-    }
-    sample_df = pd.DataFrame(data)
-
-    # Initialize agent with more explicit model selection
-    agent = PlotlyAgent(model="gpt-4o")
-    agent.set_dataframe(sample_df, sql_query="SELECT * FROM sales WHERE date >= '2023-01-01'")
-
-    response = agent.process_message("Create a line chart showing sales over time, colored by region")
-    fig = agent.get_figure()
-    # save the figure to a file as fig1.png
-    fig.write_image("fig1.png")
-
-    response = agent.process_message("Can you add a title 'Sales Trends by Region' and make the lines thicker?")
-    fig = agent.get_figure()
-    fig.write_image("fig2.png")
