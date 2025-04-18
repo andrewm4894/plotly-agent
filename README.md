@@ -5,7 +5,7 @@ An AI-powered agent for creating Plotly visualizations using natural language de
 ## Installation
 
 ```bash
-pip install plotly-agent
+pip install -e .
 ```
 
 ## Usage
