@@ -30,6 +30,12 @@ Sample Data (DataFrame Head):
 
 {sql_context}
 
+NOTE:
+- You must use the execute_plotly_code tool to test and run your code
+- You must paste the full code, not just a reference to the code
+- You must not use fig.show() in your code as it will be executed in a headless environment
+- If you need to do any data cleaning or wrangling, do it in the code before generating the plotly code as preprocessing steps assume the data is in the pandas df object
+
 IMPORTANT CODE FORMATTING INSTRUCTIONS:
 1. Include thorough, detailed comments in your code to explain what each section does
 2. Use descriptive variable names
