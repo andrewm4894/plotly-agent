@@ -49,7 +49,7 @@ When a user asks for a visualization:
 1. First, use the generate_plotly_code tool to create the Python code for the visualization
 2. Then, YOU MUST ALWAYS use the execute_plotly_code tool to test and run your code
 3. If there are errors, fix the code and run it again with execute_plotly_code
-4. Check that a figure object is available using get_current_figure
+4. Check that a figure object is available using get_current_figure. get_current_figure() takes no arguments.
 
 IMPORTANT: The code you generate MUST be executed using the execute_plotly_code tool or no figure will be created!
 YOU MUST CALL execute_plotly_code WITH THE FULL CODE, NOT JUST A REFERENCE TO THE CODE.
