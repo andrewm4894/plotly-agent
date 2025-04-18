@@ -1,5 +1,17 @@
 .PHONY: run setup clean test
+.PHONY: install clean
 
+install:
+	pip install -e .
+
+clean:
+	rm -rf build/
+	rm -rf dist/
+	rm -rf *.egg-info/
+	rm -rf __pycache__/
+	rm -rf .pytest_cache/
+	rm -rf .coverage 
+	
 # Default target
 all: setup
 
